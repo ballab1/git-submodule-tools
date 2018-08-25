@@ -1,0 +1,99 @@
+#!/bin/bash
+
+function isSubmodule()
+{
+    [ -f "$( git rev-parse --show-toplevel )/.git" ]
+}
+
+function update()
+{
+    local file=${1:?'Input parameter "file" must be defined'}
+    if [ -f "$file" ]; then
+        grep -c "src" "$file" > /dev/null  &&  return
+        echo "    updating $file"
+        sed -i "s/${src}/${dst}/g" "$file"
+    fi
+}
+
+function relpath()
+{
+    local from="$1" to="$2"
+    from=${from//\/\//\/}
+    from=${from%/}
+    IFS=/
+    dirs=(${from#/})
+    for to; do
+        to=${to//\/\//\/}
+        to=${to%/}
+        local commonPrefix=/ d=
+        for d in "${dirs[@]}"; do
+            case "$to/" in
+                "$commonPrefix$d/"*) ;;
+                *) break;;
+            esac
+            commonPrefix+="$d/"
+        done
+        local ancestor="${from#${commonPrefix%/}}"
+        ancestor=${ancestor//[^\/]/}
+        ancestor=${ancestor//\//..\/}
+    done
+    echo "$ancestor${to#$commonPrefix}"
+}
+
+function processTree()
+{
+    local -r dir=${1:-?"Directory name 'dir' of submodule leaf must be entered"}
+    pushd "$dir" > /dev/null
+    echo "Modifying $(pwd)"
+
+    local done=0
+    while isSubmodule ; do
+        local superproject="$(git rev-parse --show-superproject-working-tree )"
+        local subproject="$( git rev-parse --show-toplevel )"
+        local subproject_gitdir="$( git rev-parse --git-dir )"
+
+        cd "${superproject}"
+        printf "  cd \e[35m${superproject}\e[0m\n"
+        printf "    \e[35msuperproject:\e[0m      $superproject\n"
+        printf "    \e[35msubproject:\e[0m        $subproject\n"
+        if [ "$done" -eq 0 ]; then
+            done=1
+            local rel_path="$( relpath "/$superproject" "/$subproject" )"
+            echo "    git mv $rel_path ${rel_path//${src}/${dst}}"
+            echo "    mv $subproject_gitdir ${subproject_gitdir//${src}/${dst}}"
+            git mv "$rel_path" "${rel_path//${src}/${dst}}"
+            update "${subproject//${src}/${dst}}/.git"
+            update "${superproject}/.gitmodules"
+            update "${subproject_gitdir}/config"
+            update "${subproject_gitdir}/FETCH_HEAD"
+            mv "${subproject_gitdir}" "${subproject_gitdir//${src}/${dst}}"
+#        else
+#            update "${subproject}/.git"
+#            update "${superproject}/.gitmodules"
+#            update "${subproject_gitdir}/config"
+#            update "${subproject_gitdir}/FETCH_HEAD"
+        fi
+    done
+    popd > /dev/null
+}
+
+function processSubmodules()
+{
+    local -r base=${1:-?"Directory name 'base' of top level repo must be entered"}
+    cd "$base"
+    echo "Searching for '$src' submodules"
+    while read dir; do
+        processTree "$dir"
+    done < <( git submodule status --recursive | awk '{ print $2 }' | grep "$src" )
+}
+
+#declare -r src=${1:-?"Original submodule name 'src' must be entered"}
+#declare -r dst=${1:-?"target submodule name 'dst' must be entered"}
+
+declare -r src=container_lib
+declare -r dst=container_build_framework
+
+processSubmodules "$( pwd )"
+
+git submodule status --recursive
+git status

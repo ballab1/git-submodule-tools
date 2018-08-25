@@ -1,0 +1,50 @@
+#!/bin/bash -e
+## Check for updates, does a fetch (dry-run)
+## but only for the current branch
+
+## read input, display help if necessary
+if [[ "$@" == *--help* ]]; then
+    cat<<EOF
+ Synchronize a <target> branch to some other [<source>] branch
+
+ This command removes any local and remote branches named <target>
+ and then recreates local and remote <target> branches with the same
+ commit as the [<source>] branch. 
+ If [<source>] is not specified, it is assumed to be the current branch.
+
+ Usage:
+    git bsync <target branch> [<source branch>]
+EOF
+    exit 0;
+fi
+
+if [[ -z "$1" ]]; then
+    cat >&2 <<EOF 
+Error: bsync requires the name of a branch to be supplied.
+EOF
+fi
+
+## from the git mailinglist:
+function git
+{
+    LC_MESSAGES=C command git "$@"
+} 
+export git
+
+
+## get current branch 
+target=$1
+source=${2:-$(git name-rev --name-only HEAD)}
+
+if [[ $source = $target ]]; then
+    cat >&2 <<EOF 
+Error: target branch cannot be the same as the source branch.
+EOF
+fi
+
+## sync source and target
+git checkout $source
+git branch -D $target
+git push origin --delete $target
+git checkout -b $target
+git push --set-upstream origin $target
